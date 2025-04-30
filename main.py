@@ -12,7 +12,7 @@ app = Flask(__name__)
 NUM_SKILLS = 10
 SKILL_IDS = [str(i) for i in range(1, NUM_SKILLS + 1)]
 
-def one_hot_encode(skills, all_skills=SKILL_IDS):
+def one_hot_encode(skills, all_skills=range(1, NUM_SKILLS + 1)):
     return [1 if s in skills else 0 for s in all_skills]
 
 @app.route('/predict', methods=['POST'])
@@ -42,7 +42,7 @@ def predict():
         row = (
             task_features +
             task_skill_vec +
-            [emp["available_bandwidth"]] +
+            [float(emp["available_bandwidth"])] +
             emp_skill_vec +
             [match_score, num_matching]
         )
