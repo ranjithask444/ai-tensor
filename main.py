@@ -1,50 +1,67 @@
 from flask import Flask, request, jsonify
-import numpy as np
 import tensorflow as tf
-import joblib
+import numpy as np
 
-# Load the trained Keras model
-model = tf.keras.models.load_model("assignment_tf_model.keras")
-
-# Load the label encoder
-label_encoder = joblib.load("label_encoder.pkl")
-
-# Define expected input feature order
-feature_columns = [
-    'task_priority',
-    'deadline_hours',
-    'available_bandwidth',
-    'skill_match_count',
-    'skill_match_percentage'
-]
+# Load model and label classes
+model = tf.keras.models.load_model("best_employee_model.h5")
+label_classes = np.load("label_classes.npy", allow_pickle=True)
 
 app = Flask(__name__)
 
+# Constants
+NUM_SKILLS = 10
+SKILL_IDS = [str(i) for i in range(1, NUM_SKILLS + 1)]
+
+def one_hot_encode(skills, all_skills=SKILL_IDS):
+    return [1 if s in skills else 0 for s in all_skills]
+
 @app.route('/predict', methods=['POST'])
 def predict():
-    try:
-        # Extract input JSON
-        input_data = request.get_json()
+    data = request.get_json()
 
-        # Validate input
-        if not all(col in input_data for col in feature_columns):
-            return jsonify({"error": f"Missing one or more required fields: {feature_columns}"}), 400
+    task_features = [
+        data["priority"],
+        data["deadline_hours"],
+        data["available_bandwidth"]
+    ]
+    task_skill_vec = one_hot_encode(data["skills_required"])
 
-        # Convert input into feature array
-        features = np.array([[input_data[col] for col in feature_columns]], dtype=np.float32)
+    candidates = data["candidate_employees"]
+    rows = []
+    user_ids = []
 
-        # Make prediction
-        probabilities = model.predict(features)
-        predicted_index = np.argmax(probabilities, axis=1)[0]
-        predicted_employee = label_encoder.inverse_transform([predicted_index])[0]
+    for emp in candidates:
+        emp_skill_vec = one_hot_encode(emp["skills"])
+        num_matching = sum([1 for s in data["skills_required"] if s in emp["skills"]])
 
-        return jsonify({
-            "predicted_employee_id": predicted_employee,
-            "probabilities": probabilities.tolist()
-        })
+        if num_matching == 0:
+            continue
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        match_score = num_matching / len(data["skills_required"])
+
+        row = (
+            task_features +
+            task_skill_vec +
+            [emp["available_bandwidth"]] +
+            emp_skill_vec +
+            [match_score, num_matching]
+        )
+        rows.append(row)
+        user_ids.append(emp["user_id"])
+
+    if not rows:
+        return jsonify({"selected_user_id": None, "reason": "No candidates with matching skills"})
+
+    predictions = model.predict(np.array(rows)).flatten()
+    best_index = np.argmax(predictions)
+    best_user_id = user_ids[best_index]
+
+    return jsonify({"selected_user_id": best_user_id})
+
+
+@app.route('/healthz', methods=['GET'])
+def health_check():
+    return jsonify({"status": "ok"}), 200
 
 if __name__ == '__main__':
         app.run(debug=True,host="0.0.0.0", port=8080)
